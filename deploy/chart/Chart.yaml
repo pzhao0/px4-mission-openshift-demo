@@ -1,0 +1,6 @@
+apiVersion: v2
+name: px4-mission
+description: Single-vehicle Gazebo and PX4 software-in-the-loop demonstration
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

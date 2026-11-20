@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Build, install, or remove the PX4 software-in-the-loop project."""
+import argparse
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parent
+CHART = ROOT / "deploy/chart"
+RELEASE = "px4-mission"
+DEFAULT_IMAGES = Path("images.lock.json")
+ROLES = {"simulator", "mission", "desktop", "mavlink-router", "zenoh"}
+
+
+def command(*args, timeout=60, **kwargs):
+    return subprocess.run(args, text=True, check=True, timeout=timeout, **kwargs)
+
+
+def read(*args, timeout=60):
+    return command(*args, stdout=subprocess.PIPE, timeout=timeout).stdout.strip()
+
+
+def release_info(namespace):
+    rows = json.loads(read("helm", "list", "-n", namespace, "--deployed", "--failed", "--pending",
+                           "--uninstalling", "--filter", "^px4-mission$", "-o", "json"))
+    if not rows:
+        return None
+    if not re.fullmatch(r"px4-mission-[0-9].*", rows[0]["chart"]):
+        raise ValueError(f"Release {RELEASE} belongs to a different chart in {namespace}")
+    return rows[0]
+
+
+def check_lock(path):
+    lock = json.loads(path.read_text())
+    if not isinstance(lock, dict):
+        raise ValueError(f"{path} must be a JSON object containing the runtime images")
+    images = lock.get("images", {})
+    if set(lock) != {"images"} or not isinstance(images, dict) or set(images) != ROLES:
+        raise ValueError(f"{path} must contain the five runtime images under 'images'")
+    for role, image in images.items():
+        if not isinstance(image, str) or not re.fullmatch(r"[^ @\s]+@sha256:[0-9a-f]{64}", image):
+            raise ValueError(f"{role} requires an image pinned by SHA-256 digest")
+
+
+def dashboard(namespace):
+    # Read the pod-local dashboard, retaining only non-secret readiness fields.
+    program = """import json, urllib.request
+with urllib.request.urlopen('http://127.0.0.1:8080/status', timeout=4) as response:
+    status = json.load(response)
+print(json.dumps([status['age_seconds'], status['mission']]))"""
+    return json.loads(read("oc", "-n", namespace, "exec", "deploy/" + RELEASE + "-mission",
+                           "-c", "camera-viewer", "--", "python3", "-c", program, timeout=15))
+
+
+def data_ready(ages, state):
+    if not state or not state.get("telemetry_fresh"):
+        return False
+    modes = (state.get("demo_mode_id", 0), state.get("return_mode_id", 0))
+    return (all(ages.get(key, 999) < 5 for key in ("raw", "processed", "mission"))
+            and all(23 <= mode <= 30 for mode in modes) and modes[0] != modes[1])
+
+
+def guard_replacement(namespace):
+    ages, state = dashboard(namespace)
+    if not data_ready(ages, state) or state.get("armed") is not False:
+        raise ValueError("Update requires fresh telemetry from a disarmed simulation")
+    topic = read("oc", "-n", namespace, "exec", "deploy/" + RELEASE + "-simulator", "-c", "px4-gazebo",
+                 "--", "/opt/px4-gazebo/bin/px4-listener", "vehicle_land_detected", "-n", "1", timeout=15)
+    age = re.search(r"timestamp: \d+ \(([\d.]+) seconds ago\)", topic)
+    if not age or float(age[1]) >= 3 or not re.search(r"(?m)^\s*landed:\s+True\s*$", topic):
+        raise ValueError("Update requires a fresh landed indication from the simulator")
+
+
+def deploy(args):
+    namespace = args.namespace
+    if args.images == DEFAULT_IMAGES and not DEFAULT_IMAGES.is_file():
+        raise ValueError(f"Missing {DEFAULT_IMAGES}. Run ./demo build --namespace {namespace} first")
+    check_lock(args.images)
+    values = ["-f", str(args.values)] if args.values else []
+    values += ["-f", str(args.images)]
+    desired = read("helm", "template", RELEASE, CHART, "-n", namespace, *values)
+    current = release_info(namespace)
+    applied = current and read("helm", "get", "manifest", RELEASE, "-n", namespace)
+    if current and current["status"] == "deployed" and applied == desired:
+        print("Release already matches. Checking readiness.", flush=True)
+    else:
+        if current:
+            guard_replacement(namespace)
+        command("helm", "upgrade", "--install", RELEASE, CHART, "-n", namespace, "--reset-values",
+                *values, "--timeout", "10m", timeout=630)
+    for role in ("simulator", "mission"):
+        command("oc", "-n", namespace, "rollout", "status", f"deployment/{RELEASE}-{role}",
+                "--timeout=10m", timeout=615)
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        ages, state = dashboard(namespace)
+        if data_ready(ages, state):
+            break
+        time.sleep(3)
+    else:
+        raise TimeoutError("Camera, position, mission status or registered modes are stale")
+    for role in ("dashboard", "desktop"):
+        host = read("oc", "-n", namespace, "get", "route", RELEASE + "-" + role, "-o", "jsonpath={.spec.host}")
+        print(f"{role.capitalize()}: https://{host}/")
+    print(f"QGroundControl TCP 127.0.0.1:5760\noc -n {namespace} port-forward deploy/{RELEASE}-simulator 5760:5760")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    subs = parser.add_subparsers(dest="action", required=True)
+    for action, description in (("build", "Build the project images on OpenShift"), ("deploy", "Install the project"),
+                                ("remove", "Remove the selected Helm release")):
+        sub = subs.add_parser(action, help=description)
+        sub.add_argument("--namespace", required=True, help="Existing OpenShift project")
+        if action == "build":
+            sub.add_argument("--output", type=Path, default=DEFAULT_IMAGES)
+        if action == "deploy":
+            sub.add_argument("--images", type=Path, default=DEFAULT_IMAGES,
+                             help="Digest-pinned image lock (default: ./images.lock.json from build)")
+            sub.add_argument("--values", type=Path, help="Optional Helm values, e.g. a distinct DDS domain pair")
+    args = parser.parse_args()
+    if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?", args.namespace):
+        parser.error("invalid namespace name")
+    try:
+        if args.action == "build":
+            from build.build import build
+            build(args.namespace, args.output)
+        elif args.action == "deploy":
+            deploy(args)
+        elif release_info(args.namespace):
+            command("helm", "uninstall", RELEASE, "-n", args.namespace, "--wait", "--timeout", "3m", timeout=190)
+        else:
+            print(f"No {RELEASE} release in {args.namespace}")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"{args.action} failed: {error}", file=sys.stderr)
+        if args.action == "deploy":
+            print(f"Inspect: oc -n {args.namespace} get pods,events", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

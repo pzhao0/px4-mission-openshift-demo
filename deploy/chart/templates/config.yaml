@@ -1,0 +1,20 @@
+{{- if eq (int .Values.domains.simulator) (int .Values.domains.mission) }}
+{{- fail "simulator and mission DDS domains must differ" }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-simulation
+data:
+  {{- (.Files.Glob "files/simulation/*").AsConfig | nindent 2 }}
+{{- range $role := list "simulator" "mission" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-{{ $role }}-transport
+data:
+  zenoh.json5: |
+    {{- tpl ($.Files.Get (printf "files/zenoh-%s.json5" $role)) $ | nindent 4 }}
+{{- end }}

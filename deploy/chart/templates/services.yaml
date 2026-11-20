@@ -1,0 +1,39 @@
+{{- $ports := list
+  (dict "name" "agent" "role" "mission" "port" 8888 "protocol" "UDP" "bootstrap" true)
+  (dict "name" "camera" "role" "simulator" "port" 7447 "protocol" "TCP" "bootstrap" true)
+  (dict "name" "dashboard" "role" "mission" "port" 8080 "protocol" "TCP" "browser" true)
+  (dict "name" "desktop" "role" "simulator" "port" 6080 "protocol" "TCP" "browser" true) }}
+{{- range $ports }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ .name }}
+spec:
+  {{- if .bootstrap }}
+  publishNotReadyAddresses: true
+  {{- end }}
+  selector:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: {{ .role }}
+  ports:
+    - name: {{ ternary "http" "transport" (hasKey . "browser") }}
+      port: {{ .port }}
+      protocol: {{ .protocol }}
+{{- if .browser }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ $.Release.Name }}-{{ .name }}
+spec:
+  to:
+    kind: Service
+    name: {{ $.Release.Name }}-{{ .name }}
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}
+{{- end }}

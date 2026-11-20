@@ -1,0 +1,144 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-simulator
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: simulator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: simulator
+      annotations:
+        checksum/transport: {{ tpl (.Files.Get "files/zenoh-simulator.json5") . | sha256sum }}
+        checksum/simulation: {{ (.Files.Glob "files/simulation/*").AsConfig | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-runtime
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/arch: amd64}
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
+      volumes:
+        - name: transport
+          configMap: {name: "{{ .Release.Name }}-simulator-transport"}
+        - name: simulation
+          configMap: {name: "{{ .Release.Name }}-simulation"}
+        - name: sim-tmp
+          emptyDir: {sizeLimit: 1Gi}
+        - name: desktop-tmp
+          emptyDir: {sizeLimit: 1Gi}
+        - name: bridge-tmp
+          emptyDir: {sizeLimit: 256Mi}
+      containers:
+        - name: gazebo-vnc
+          image: {{ index .Values.images "desktop" | quote }}
+          env:
+            - name: GZ_PARTITION
+              value: "{{ .Release.Namespace }}-{{ .Release.Name }}"
+            - name: GZ_SIM_RESOURCE_PATH
+              value: "/tmp/models:/opt/px4-gazebo/share/gz/models:/opt/px4-gazebo/share/gz/worlds"
+            - name: HOME
+              value: "/tmp/gazebo-vnc-home"
+            - name: XDG_CONFIG_HOME
+              value: "/tmp/gazebo-vnc-config"
+            - name: XDG_CACHE_HOME
+              value: "/tmp/gazebo-vnc-cache"
+          resources: {{- toYaml .Values.resources.desktop | nindent 12 }}
+          securityContext: {{- include "px4.security" . | nindent 12 }}
+          volumeMounts:
+            - {name: desktop-tmp, mountPath: /tmp}
+          ports: [{name: desktop, containerPort: 6080}]
+          readinessProbe:
+            httpGet: {path: /vnc_lite.html, port: desktop}
+            periodSeconds: 5
+        - name: mavlink-router
+          image: {{ index .Values.images "mavlink-router" | quote }}
+          args: ["-e", "127.0.0.1:18570", "127.0.0.1:14550"]
+          resources: {{- toYaml .Values.resources.router | nindent 12 }}
+          securityContext: {{- include "px4.security" . | nindent 12 }}
+          ports: [{name: qgc, containerPort: 5760}]
+        - name: camera-bridge
+          image: {{ index .Values.images "mission" | quote }}
+          args: ["bridge"]
+          env:
+            - name: ROS_DOMAIN_ID
+              value: "{{ .Values.domains.simulator }}"
+            - name: RMW_IMPLEMENTATION
+              value: "rmw_cyclonedds_cpp"
+            - name: HOME
+              value: "/tmp/ros-home"
+            - name: ROS_LOG_DIR
+              value: "/tmp/ros-log"
+            - name: GZ_PARTITION
+              value: "{{ .Release.Namespace }}-{{ .Release.Name }}"
+            - name: PX4_GZ_WORLD
+              value: "mission_landing"
+          resources: {{- toYaml .Values.resources.bridge | nindent 12 }}
+          securityContext: {{- include "px4.security" . | nindent 12 }}
+          volumeMounts:
+            - {name: bridge-tmp, mountPath: /tmp}
+        - name: camera-transport
+          image: {{ index .Values.images "zenoh" | quote }}
+          args: ["-c", "/etc/mission/zenoh.json5"]
+          env:
+            - name: ROS_DISTRO
+              value: "jazzy"
+          resources: {{- toYaml .Values.resources.transport | nindent 12 }}
+          securityContext: {{- include "px4.security" . | nindent 12 }}
+          volumeMounts:
+            - {name: transport, mountPath: /etc/mission}
+        # Start physics after the large GUI and bridge images have been pulled.
+        - name: px4-gazebo
+          image: {{ index .Values.images "simulator" | quote }}
+          workingDir: /tmp
+          env:
+            - name: HEADLESS
+              value: "1"
+            - name: PX4_SIM_MODEL
+              value: "gz_x500_mono_cam_down"
+            - name: PX4_GZ_STANDALONE
+              value: "1"
+            - name: PX4_GZ_WORLD
+              value: "mission_landing"
+            - name: PX4_GZ_WORLDS
+              value: "/etc/mission-sim"
+            - name: LIBGL_ALWAYS_SOFTWARE
+              value: "1"
+            - name: EGL_PLATFORM
+              value: "surfaceless"
+            - name: PX4_PARAM_CP_DIST
+              value: "-1"
+            - name: PX4_PARAM_MPC_POS_MODE
+              value: "4"
+            - name: PX4_PARAM_MPC_VEL_MANUAL
+              value: "2"
+            - name: PX4_PARAM_MPC_XY_VEL_MAX
+              value: "2"
+            - name: PX4_PARAM_MPC_XY_CRUISE
+              value: "2"
+            - name: PX4_PARAM_MIS_TAKEOFF_ALT
+              value: "2"
+            - name: PX4_SYS_AUTOSTART
+              value: "4014"
+            - name: ROS_DOMAIN_ID
+              value: "{{ .Values.domains.mission }}"
+            - name: XRCE_AGENT_HOST
+              value: "{{ .Release.Name }}-agent"
+            - name: GZ_PARTITION
+              value: "{{ .Release.Namespace }}-{{ .Release.Name }}"
+            - name: HOME
+              value: "/tmp/px4-home"
+            - name: XDG_DATA_HOME
+              value: "/tmp/px4-data"
+          resources: {{- toYaml .Values.resources.simulator | nindent 12 }}
+          securityContext: {{- include "px4.security" . | nindent 12 }}
+          volumeMounts:
+            - {name: sim-tmp, mountPath: /tmp}
+            - {name: desktop-tmp, mountPath: /tmp/px4-demo-runtime}
+            - {name: simulation, mountPath: /etc/mission-sim, readOnly: true}
+          command: ["/bin/bash", "/etc/mission-sim/start-simulator.sh"]

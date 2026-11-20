@@ -1,0 +1,7 @@
+# Source and attribution
+
+The ROSCon 2025 workshop contributors supplied the ArUco detector, the precision landing example on which mission_demo is based, and the original workshop materials. The standalone version incorporates the working mission, dashboard, camera scenario and OpenShift runtime changes from the workshop working tree based on d67ff376f8c4c4468eeb439afa0fa283ee63437d. The repository identifies CC BY-SA 4.0 in its root LICENSE and README. The detector was added as source in commit e3dfe58 and carries a placeholder in its upstream package.xml. This distribution applies the workshop's stated repository license to the imported workshop material. The authors and maintainers listed in the packages retain attribution. [Workshop](https://github.com/pzhao0/roscon-25-workshop) · [License text](../licenses/workshop.txt)
+
+The PX4 project supplies SITL and the Gazebo models and worlds through its published container image. The starting desktop and router recipes and GUI configuration came from the PX4 fork used by the workshop. Upstream submodule and package notices are retained. [PX4 source](https://github.com/PX4/PX4-Autopilot) · [PX4 license](../licenses/PX4.txt) · [Workshop fork](https://github.com/lokeshrangineni/PX4-Autopilot)
+
+The PX4 message scaffolding, Auterion PX4 ROS 2 Interface Library, MAVLink Router and Eclipse Zenoh bridge keep their own licenses. Installed Linux, ROS, Gazebo and desktop packages retain their packaged notices. [Pinned dependency versions](../dependencies.lock.json)

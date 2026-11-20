@@ -1,0 +1,10 @@
+{
+  mode: "router",
+  listen: { endpoints: ["tcp/0.0.0.0:7447"] },
+  transport: { shared_memory: { enabled: false } },
+  scouting: { multicast: { enabled: false } },
+  plugins: { ros2dds: {
+    domain: {{ .Values.domains.simulator }},
+    allow: { publishers: ["/camera", "/camera_info", "/clock"] }
+  } }
+}

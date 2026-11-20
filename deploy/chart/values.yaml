@@ -1,0 +1,15 @@
+# ./demo supplies these from the selected image lock.
+images: {}
+# Assign distinct domain pairs to concurrently reachable demos.
+domains:
+  simulator: 61
+  mission: 62
+resources:
+  simulator: {requests: {cpu: 500m, memory: 4Gi}, limits: {cpu: "4", memory: 8Gi}}
+  desktop: {requests: {cpu: 200m, memory: 1Gi}, limits: {cpu: "2", memory: 3Gi}}
+  router: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 250m, memory: 256Mi}}
+  bridge: {requests: {cpu: 250m, memory: 256Mi}, limits: {cpu: "1", memory: 1Gi}}
+  mission: {requests: {cpu: 250m, memory: 256Mi}, limits: {cpu: "2", memory: 2Gi}}
+  agent: {requests: {cpu: 250m, memory: 256Mi}, limits: {cpu: "2", memory: 2Gi}}
+  transport: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+  dashboard: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}

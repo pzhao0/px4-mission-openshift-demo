@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "required": [
+    "images",
+    "domains",
+    "resources"
+  ],
+  "properties": {
+    "images": {
+      "type": "object",
+      "required": [
+        "simulator",
+        "mission",
+        "desktop",
+        "mavlink-router",
+        "zenoh"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "simulator": {
+          "type": "string",
+          "pattern": "^[^ @]+@sha256:[a-f0-9]{64}$"
+        },
+        "mission": {
+          "type": "string",
+          "pattern": "^[^ @]+@sha256:[a-f0-9]{64}$"
+        },
+        "desktop": {
+          "type": "string",
+          "pattern": "^[^ @]+@sha256:[a-f0-9]{64}$"
+        },
+        "mavlink-router": {
+          "type": "string",
+          "pattern": "^[^ @]+@sha256:[a-f0-9]{64}$"
+        },
+        "zenoh": {
+          "type": "string",
+          "pattern": "^[^ @]+@sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "required": [
+        "simulator",
+        "mission"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "simulator": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "mission": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    }
+  }
+}

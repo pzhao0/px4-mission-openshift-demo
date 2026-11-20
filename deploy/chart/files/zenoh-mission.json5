@@ -1,0 +1,14 @@
+{
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/{{ .Release.Name }}-camera:7447"],
+    timeout_ms: -1,
+    exit_on_failure: false
+  },
+  transport: { shared_memory: { enabled: false } },
+  scouting: { multicast: { enabled: false } },
+  plugins: { ros2dds: {
+    domain: {{ .Values.domains.mission }},
+    allow: { subscribers: ["/camera", "/camera_info", "/clock"] }
+  } }
+}

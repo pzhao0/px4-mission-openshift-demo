@@ -1,0 +1,16 @@
+{
+  "apiVersion": "build.openshift.io/v1",
+  "kind": "BuildConfig",
+  "metadata": {},
+  "spec": {
+    "triggers": [],
+    "source": {"type": "Binary"},
+    "strategy": {"type": "Docker", "dockerStrategy": {"dockerfilePath": "Dockerfile"}},
+    "nodeSelector": {"kubernetes.io/arch": "amd64"},
+    "resources": {
+      "requests": {"cpu": "500m", "memory": "3Gi"},
+      "limits": {"cpu": "4", "memory": "12Gi"}
+    },
+    "completionDeadlineSeconds": 7200
+  }
+}
