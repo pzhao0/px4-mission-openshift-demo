@@ -4,6 +4,8 @@ A software-in-the-loop (SITL) project for developing and testing ROS 2 flight mo
 
 ## Architecture
 
+For a walkthrough of the runtime connections, mission lifecycle, and repository layout, see the [architecture guide](docs/architecture.md).
+
 The [Helm chart](deploy/chart) deploys two pods. The simulator pod runs PX4 SITL with the [Gazebo world and camera configuration](deploy/chart/files/simulation) mounted from a ConfigMap. It also runs the Gazebo-to-ROS bridge, a MAVLink router for QGroundControl, and a Gazebo desktop served through noVNC. The mission pod runs the ROS 2 mission executor and ArUco tracker alongside the Micro XRCE-DDS Agent and camera dashboard.
 
 ```mermaid
