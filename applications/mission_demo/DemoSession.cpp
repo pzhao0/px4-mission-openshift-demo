@@ -1,5 +1,7 @@
 #include "DemoSession.hpp"
+#include "SurveyLanes.hpp"
 
+#include <cinttypes>
 #include <cmath>
 #include <iomanip>
 #include <px4_ros2/utils/message_version.hpp>
@@ -20,6 +22,7 @@ DemoSession::DemoSession(rclcpp::Node& node) : _node(node)
         }
         _position = msg;
         _position_time = Clock::now();
+        _position_sim_time = _node.now().nanoseconds();
       });
   _status_sub = node.create_subscription<Status>(
       "/fmu/out/vehicle_status" + px4_ros2::getMessageNameVersion<Status>(),
@@ -33,6 +36,11 @@ DemoSession::DemoSession(rclcpp::Node& node) : _node(node)
   _land_sub = node.create_subscription<Land>(
       "/fmu/out/vehicle_land_detected" + px4_ros2::getMessageNameVersion<Land>(),
       rclcpp::SensorDataQoS(), [this](const Land& msg) {
+        if (msg.landed && !_land.landed && _phase == "demo_landing") {
+          RCLCPP_INFO(_node.get_logger(), "Demo touchdown sim_ns=%" PRId64
+              " aircraft_local_ned_m=[%.4f,%.4f,%.4f]",
+              _node.now().nanoseconds(), _position.x, _position.y, _position.z);
+        }
         _land = msg;
         _land_time = Clock::now();
       });
@@ -48,6 +56,25 @@ bool DemoSession::telemetryFresh() const
          position().allFinite() && velocity().allFinite() && std::isfinite(_position.heading);
 }
 
+bool DemoSession::surveyPositionFresh(int64_t now) const
+{
+  return _position_sim_time > 0 && now >= _position_sim_time && now - _position_sim_time < 250'000'000 &&
+         Clock::now() - _position_time < 500ms && telemetryFresh() && startValid();
+}
+
+std::string DemoSession::demoChoices() const
+{
+  return _survey_mode ? "DemoWaypoints or SignSurvey" : "DemoWaypoints";
+}
+
+void DemoSession::setModeIds(uint8_t waypoints, uint8_t returning, std::optional<uint8_t> survey)
+{
+  _waypoint_mode = waypoints;
+  _return_mode = returning;
+  _survey_mode = survey;
+  _message = "Select " + demoChoices() + " and arm in QGroundControl to begin.";
+}
+
 bool DemoSession::startValid() const { return _start.has_value() && !_origin_changed; }
 
 bool DemoSession::atStart() const
@@ -56,7 +83,7 @@ bool DemoSession::atStart() const
          std::abs(_position.z - start().z()) < .5f;
 }
 
-bool DemoSession::beginDemo(std::string& reason)
+bool DemoSession::beginDemo(uint8_t mode, std::string& reason)
 {
   if (!telemetryFresh() || !_land.landed) {
     reason = "Demo start requires fresh valid position and a landed vehicle.";
@@ -72,7 +99,10 @@ bool DemoSession::beginDemo(std::string& reason)
     reason = "Return to the saved start before starting another demo.";
     return false;
   }
-  phase("demo_takeoff", "Taking off for the waypoint and marker-landing demo.");
+  _survey_run = _survey_mode == mode ? _node.now().nanoseconds() : 0;
+  _survey_pass_start = _sighting_frame = _hold_frame = 0;
+  _demo_summary.clear();
+  phase("demo_takeoff", "Taking off for the flight and marker landing.");
   return true;
 }
 
@@ -108,7 +138,8 @@ void DemoSession::returnPrepared()
 void DemoSession::demoComplete()
 {
   ++_completed_runs;
-  phase("demo_complete", "Demo complete. Select Return to start, then arm in QGroundControl.");
+  phase("demo_complete", (_demo_summary.empty() ? "Demo complete." : _demo_summary) +
+      " Select Return to start, then arm in QGroundControl.");
 }
 
 void DemoSession::returnComplete()
@@ -118,16 +149,21 @@ void DemoSession::returnComplete()
     return;
   }
   ++_completed_returns;
-  phase("ready", "Ready for the next run. Select DemoWaypoints and arm in QGroundControl.");
+  phase("ready", "Ready for the next run. Select " + demoChoices() + " and arm in QGroundControl.");
 }
 
 void DemoSession::stop(const std::string& reason) { phase("stopped", reason); }
 
 void DemoSession::phase(const std::string& phase_name, const std::string& message)
 {
+  if (_phase == "search_investigating" && phase_name != "search_investigating" &&
+      phase_name != "search_returning") {
+    _hold_frame = 0;
+  }
   _phase = phase_name;
   _message = message;
-  RCLCPP_INFO(_node.get_logger(), "Demo phase: %s — %s", _phase.c_str(), _message.c_str());
+  RCLCPP_INFO(_node.get_logger(), "Demo phase: %s — %s (sim_ns=%" PRId64 ")",
+              _phase.c_str(), _message.c_str(), _node.now().nanoseconds());
   publish();
 }
 
@@ -141,14 +177,29 @@ std::string DemoSession::statusJson() const
       << ",\"can_return\":" << can_return << ",\"return_reason\":" << std::quoted(reason)
       << ",\"telemetry_fresh\":" << telemetryFresh() << ",\"at_start\":" << atStart()
       << ",\"armed\":" << (_status.arming_state == px4_msgs::msg::VehicleStatus::ARMING_STATE_ARMED)
+      << ",\"landed\":" << _land.landed
       << ",\"completed_runs\":" << _completed_runs << ",\"completed_returns\":" << _completed_returns
-      << ",\"demo_mode_id\":" << unsigned(_demo_mode) << ",\"return_mode_id\":" << unsigned(_return_mode)
-      << ",\"start_ned\":";
+      << ",\"demo_mode_id\":" << unsigned(_waypoint_mode) << ",\"return_mode_id\":" << unsigned(_return_mode)
+      << ",\"waypoint_mode_id\":" << unsigned(_waypoint_mode);
+  if (_survey_mode) out << ",\"survey_mode_id\":" << unsigned(*_survey_mode);
+  out << ",\"start_ned\":";
   if (startValid()) out << '[' << start().x() << ',' << start().y() << ',' << start().z() << ']';
   else out << "null";
   out << ",\"distance_to_start_metres\":";
   if (startValid() && telemetryFresh()) out << (position().head<2>() - start().head<2>()).norm();
   else out << "null";
+  if (_survey_mode && (!_start || surveying())) {
+    out << ",\"survey\":{\"run_ns\":" << _survey_run
+        << ",\"pass_start_ns\":" << _survey_pass_start
+        << ",\"hold_frame_ns\":" << _hold_frame
+        << ",\"sighting_ns\":" << _sighting_frame << ",\"lanes_en\":[";
+    for (int lane = 0; lane < survey::kPasses; ++lane) {
+      const auto a = survey::endpoint(lane, true), b = survey::endpoint(lane, false);
+      if (lane) out << ',';
+      out << "[[" << a[1] << ',' << a[0] << "],[" << b[1] << ',' << b[0] << "]]";
+    }
+    out << "]}";
+  }
   return out.str() + '}';
 }
 

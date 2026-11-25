@@ -1,0 +1,13 @@
+# 100 m square visual. Repeat the ground texture every 12.5 m.
+o survey_ground
+v -50 -50 0
+v 50 -50 0
+v 50 50 0
+v -50 50 0
+vt 0 0
+vt 8 0
+vt 8 8
+vt 0 8
+vn 0 0 1
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1

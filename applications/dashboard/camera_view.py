@@ -16,7 +16,10 @@ from geometry_msgs.msg import PoseStamped
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
+from px4_msgs.msg import VehicleLocalPosition
+from rosgraph_msgs.msg import Clock
+from survey_view import SurveyView
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
@@ -39,7 +42,35 @@ class Viewer(Node):
         self.subs.append(self.create_subscription(
             PoseStamped, '/target_pose', self.pose, qos_profile_sensor_data))
         self.subs.append(self.create_subscription(String, '/mission/demo_status', self.demo_status, 1))
+        self.survey = None
+        self.sim_ns = 0
+        if os.environ.get('SURVEY_ENABLED') == 'true':
+            self.survey = SurveyView()
+            position = VehicleLocalPosition
+            version = f'_v{position.MESSAGE_VERSION}' if position.MESSAGE_VERSION else ''
+            for cls, topic, callback, qos in [
+                (position, '/fmu/out/vehicle_local_position' + version, self.position, qos_profile_sensor_data),
+                (Clock, '/clock', self.clock, qos_profile_sensor_data),
+                (CompressedImage, '/mission/survey_preview', self.preview, 10),
+            ]:
+                self.subs.append(self.create_subscription(cls, topic, callback, qos))
         self.return_client = self.create_client(Trigger, '/mission/prepare_return')
+
+    def clock(self, msg):
+        self.sim_ns = msg.clock.sec * 1_000_000_000 + msg.clock.nanosec
+
+    def position(self, msg):
+        if msg.xy_valid and msg.z_valid:
+            with self.lock:
+                self.survey.position(self.sim_ns, msg.y, msg.x, -msg.z)
+
+    def preview(self, msg):
+        stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        data = bytes(msg.data)
+        with self.lock:
+            self.survey.preview(stamp, data)
+            self.frames['yolo'] = data
+            self.received['yolo'] = time.monotonic()
 
     def demo_status(self, msg):
         try:
@@ -48,6 +79,8 @@ class Viewer(Node):
             return
         if isinstance(mission, dict):
             with self.lock:
+                if self.survey:
+                    self.survey.status(mission)
                 self.mission = mission
                 self.received['mission'] = time.monotonic()
 
@@ -100,11 +133,17 @@ def main():
                     data = {'age_seconds': {k: round(time.monotonic() - v, 2)
                                             for k, v in viewer.received.items()},
                             'last_target_metres': viewer.target,
-                            'mission': viewer.mission, 'csrf_token': viewer.csrf_token}
+                            'mission': viewer.mission, 'csrf_token': viewer.csrf_token,
+                            'survey': viewer.survey.snapshot() if viewer.survey and viewer.mission and 'survey' in viewer.mission else None}
                 body, mime = json.dumps(data).encode(), 'application/json'
-            elif path in ('/raw.jpg', '/processed.jpg'):
+            elif path in ('/raw.jpg', '/processed.jpg', '/yolo.jpg', '/sighting.jpg', '/sign-found.jpg'):
                 with viewer.lock:
-                    body = viewer.frames.get(path[1:-4])
+                    if path == '/sign-found.jpg' and viewer.survey:
+                        body = viewer.survey.hold_image
+                    elif path == '/sighting.jpg' and viewer.survey:
+                        body = viewer.survey.first_image
+                    else:
+                        body = viewer.frames.get(path[1:-4])
                 mime = 'image/jpeg'
                 if body is None:
                     code, body, mime = 503, b'Waiting for an image', 'text/plain'

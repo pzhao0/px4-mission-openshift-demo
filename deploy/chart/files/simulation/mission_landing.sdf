@@ -33,6 +33,23 @@
         </visual>
       </link>
     </model>
+    <include><uri>file:///etc/mission-sim/survey-ground.sdf</uri></include>
+    <model name="inspection_stop_sign">
+      <static>true</static>
+      <pose degrees="true">12.5 22.8 0.015 0 0 -75</pose>
+      <link name="sign">
+        <visual name="face">
+          <geometry><mesh><uri>file:///etc/mission-sim/stop-sign.obj</uri></mesh></geometry>
+          <material>
+            <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+            <pbr><metal>
+              <albedo_map>/etc/mission-sim/stop-sign.png</albedo_map>
+              <metalness>0</metalness><roughness>1</roughness>
+            </metal></pbr>
+          </material>
+        </visual>
+      </link>
+    </model>
     <!-- Workshop's final NED waypoint (-4, 8) is Gazebo ENU (8, -4). -->
     <include>
       <uri>model://arucotag</uri>

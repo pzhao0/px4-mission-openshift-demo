@@ -10,7 +10,6 @@ import xml.etree.ElementTree as ET
 tree = ET.parse(sys.argv[1])
 sensor = tree.find(".//sensor[@name='camera']")
 # Keep raw frames small for the cluster's capped UDP receive buffers.
-# Validate marker detection range before flying; see VALIDATION.md.
 sensor.find("camera/image/width").text = "320"
 sensor.find("camera/image/height").text = "240"
 sensor.find("update_rate").text = "10"

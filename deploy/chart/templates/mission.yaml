@@ -44,6 +44,13 @@ spec:
                 /fmu/out/vehicle_status_v4 px4_msgs/msg/VehicleStatus >/dev/null
               exec /opt/mission/entrypoint.sh mission
           env:
+            # Keep DDS discovery multicast. Large camera samples use unicast.
+            - name: CYCLONEDDS_URI
+              value: "<CycloneDDS><Domain><General><AllowMulticast>spdp</AllowMulticast></General></Domain></CycloneDDS>"
+            - name: SURVEY_ENABLED
+              value: "true"
+            - name: SURVEY_ONNX_PATH
+              value: {{ .Values.survey.onnxPath | quote }}
             - name: SITL_NAMESPACE
               valueFrom:
                 fieldRef: {fieldPath: metadata.namespace}
@@ -93,6 +100,11 @@ spec:
           image: {{ index .Values.images "mission" | quote }}
           args: ["python3", "/opt/camera-view/camera_view.py"]
           env:
+            # Keep DDS discovery multicast. Large camera samples use unicast.
+            - name: CYCLONEDDS_URI
+              value: "<CycloneDDS><Domain><General><AllowMulticast>spdp</AllowMulticast></General></Domain></CycloneDDS>"
+            - name: SURVEY_ENABLED
+              value: "true"
             - name: ROS_DOMAIN_ID
               value: "{{ .Values.domains.mission }}"
             - name: RMW_IMPLEMENTATION

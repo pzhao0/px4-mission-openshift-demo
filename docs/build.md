@@ -11,6 +11,8 @@ The three binary builds run concurrently. Each requests 500m CPU and 3 GiB memor
 
 The builder fetches message and service definitions from the PX4 source revision that produced the simulator image. The mission build uses those definitions, compiles both ROS packages and runs the executor regression. Source revisions and base images are pinned in [dependencies.lock.json](../dependencies.lock.json). Update the PX4 image digest and source revision together.
 
+The standard build packages the YOLO model and runtime for `SignSurvey` alongside `DemoWaypoints`.
+
 ## Runtime images
 
 | Component | Image source |
@@ -69,7 +71,7 @@ oc -n my-mission exec -i deploy/px4-mission-mission -c mission -- \
   --viewer /opt/camera-view/camera_view.py < tests/dashboard_http.py
 ```
 
-For the opt-in replay check, connect QGC to the selected simulation, confirm its fresh, disarmed starting state, and run the existing driver inside its mission container. This exercises normal mode selection and arming for two full cycles. Record the pod UIDs and restart counts before and after. Installing the chart and running the observer and HTTP tests never initiate a flight.
+For the opt-in replay check, connect QGC to the selected simulation, confirm its fresh, disarmed starting state, and run the existing driver inside its mission container. This exercises normal mode selection and arming for two full cycles. The replay defaults to `DemoWaypoints` when both missions are available. To choose a mission explicitly, pass `--mission DemoWaypoints` or `--mission SignSurvey` to the replay driver. Record the pod UIDs and restart counts before and after. Installing the chart and running the observer and HTTP tests never initiate a flight.
 
 ```sh
 oc -n my-mission exec -i deploy/px4-mission-mission -c mission -- \

@@ -1,0 +1,26 @@
+# Reuse a pinned mission image from the same release for its ROS/PX4 toolchain.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER root
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+WORKDIR /opt/mission_ws
+COPY src/mission_demo/ src/mission_demo/
+ARG BUILD_JOBS=4
+RUN source /opt/ros/jazzy/setup.bash \
+    && MAKEFLAGS="-j${BUILD_JOBS} -l${BUILD_JOBS}" CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS} colcon build \
+       --executor sequential --packages-select mission_demo \
+       --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    && source install/setup.bash \
+    && cmake -S src/mission_demo/test -B /tmp/mission-demo-tests -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/mission-demo-tests -j${BUILD_JOBS} \
+    && ctest --test-dir /tmp/mission-demo-tests --output-on-failure
+COPY runtime/ /opt/mission/
+COPY install-survey.sh /tmp/install-survey.sh
+RUN bash /tmp/install-survey.sh
+COPY dashboard/ /opt/camera-view/
+COPY notices/ /usr/share/doc/px4-mission-demo/
+COPY build-info.json /opt/mission/build-info.json
+RUN chmod -R a+rX /opt/mission /opt/mission_ws \
+    && chmod +x /opt/mission/entrypoint.sh
+WORKDIR /tmp
+USER 1001

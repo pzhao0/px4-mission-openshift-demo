@@ -8,6 +8,8 @@ metadata:
   name: {{ .Release.Name }}-simulation
 data:
   {{- (.Files.Glob "files/simulation/*").AsConfig | nindent 2 }}
+binaryData:
+  {{- (.Files.Glob "files/textures/*").AsSecrets | nindent 2 }}
 {{- range $role := list "simulator" "mission" }}
 ---
 apiVersion: v1

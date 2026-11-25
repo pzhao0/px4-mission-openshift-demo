@@ -55,17 +55,18 @@ print(json.dumps([status['age_seconds'], status['mission']]))"""
                            "-c", "camera-viewer", "--", "python3", "-c", program, timeout=15))
 
 
-def data_ready(ages, state):
+def data_ready(ages, state, *, check_yolo=True):
     if not state or not state.get("telemetry_fresh"):
         return False
-    modes = (state.get("demo_mode_id", 0), state.get("return_mode_id", 0))
-    return (all(ages.get(key, 999) < 5 for key in ("raw", "processed", "mission"))
-            and all(23 <= mode <= 30 for mode in modes) and modes[0] != modes[1])
+    modes = [state.get(key, 0) for key in ("waypoint_mode_id", "survey_mode_id", "return_mode_id")]
+    feeds = ("raw", "processed", "mission", "yolo") if check_yolo else ("raw", "processed", "mission")
+    return (all(ages.get(key, 999) < 5 for key in feeds)
+            and all(23 <= mode <= 30 for mode in modes) and len(set(modes)) == len(modes))
 
 
 def guard_replacement(namespace):
     ages, state = dashboard(namespace)
-    if not data_ready(ages, state) or state.get("armed") is not False:
+    if not data_ready(ages, state, check_yolo=False) or state.get("armed") is not False:
         raise ValueError("Update requires fresh telemetry from a disarmed simulation")
     topic = read("oc", "-n", namespace, "exec", "deploy/" + RELEASE + "-simulator", "-c", "px4-gazebo",
                  "--", "/opt/px4-gazebo/bin/px4-listener", "vehicle_land_detected", "-n", "1", timeout=15)
@@ -101,7 +102,7 @@ def deploy(args):
             break
         time.sleep(3)
     else:
-        raise TimeoutError("Camera, position, mission status or registered modes are stale")
+        raise TimeoutError("Timed out waiting for live camera feeds, telemetry and all three operator modes")
     for role in ("dashboard", "desktop"):
         host = read("oc", "-n", namespace, "get", "route", RELEASE + "-" + role, "-o", "jsonpath={.spec.host}")
         print(f"{role.capitalize()}: https://{host}/")

@@ -1,12 +1,12 @@
 # PX4 Mission on OpenShift
 
-A software-in-the-loop (SITL) project for developing and testing ROS 2 flight modes against PX4 and Gazebo Harmonic on OpenShift. The reference mission flies a simulated quadcopter through four waypoints, uses a downward-facing camera to land on an ArUco marker, and can return to its saved takeoff position.
+A software-in-the-loop (SITL) project for developing and testing ROS 2 flight modes against PX4 and Gazebo Harmonic on OpenShift. Choose between two missions in QGroundControl. **DemoWaypoints** flies four waypoints. **SignSurvey** searches at 5 m using the drone’s downward camera and YOLO. Both missions land on an ArUco marker and can return to the saved takeoff position. [Stop-sign survey setup](docs/stop-sign-survey.md#install)
 
 ## Architecture
 
 For a walkthrough of the runtime connections, mission lifecycle, and repository layout, see the [architecture guide](docs/architecture.md).
 
-The [Helm chart](deploy/chart) deploys two pods. The simulator pod runs PX4 SITL with the [Gazebo world and camera configuration](deploy/chart/files/simulation) mounted from a ConfigMap. It also runs the Gazebo-to-ROS bridge, a MAVLink router for QGroundControl, and a Gazebo desktop served through noVNC. The mission pod runs the ROS 2 mission executor and ArUco tracker alongside the Micro XRCE-DDS Agent and camera dashboard.
+The [Helm chart](deploy/chart) deploys two pods. The simulator pod runs PX4 SITL with the [Gazebo world and camera configuration](deploy/chart/files/simulation) mounted from a ConfigMap. It also runs the Gazebo-to-ROS bridge, a MAVLink router for QGroundControl, and a Gazebo desktop served through noVNC. The mission pod runs the ROS 2 mission executor, YOLO stop-sign detector, and ArUco tracker alongside the Micro XRCE-DDS Agent and camera dashboard.
 
 ```mermaid
 flowchart LR
@@ -27,11 +27,15 @@ flowchart LR
         receive["Zenoh client"]
         agent["Micro XRCE-DDS Agent"]
         tracker["ArUco tracker"]
+        yolo["YOLO stop-sign detector"]
         executor["Mission executor"]
         dashboard["Camera dashboard"]
         receive --> tracker -->|Target pose| executor
+        receive --> yolo -->|Sign observation| executor
+        yolo -->|Scored camera frame| dashboard
         receive --> dashboard
         agent <-->|ROS 2 topics| executor
+        agent -->|Aircraft position| dashboard
         tracker -->|Annotated image| dashboard
         executor <-->|Mission status and return request| dashboard
     end
@@ -43,7 +47,7 @@ flowchart LR
     dashboard -->|HTTPS Route| browser
 ```
 
-- **Flight control.** The [mission executor](applications/mission_demo/) registers the `DemoWaypoints` and `ReturnToStart` modes with PX4 through the PX4 ROS 2 Interface Library. Telemetry and flight commands travel through the uXRCE-DDS Agent Service. QGroundControl uses a separate MAVLink link for mode selection, arming, and manual control.
+- **Flight control.** The [mission executor](applications/mission_demo/) registers `DemoWaypoints`, `SignSurvey`, and `ReturnToStart` with PX4 through the PX4 ROS 2 Interface Library. Telemetry and flight commands travel through the uXRCE-DDS Agent Service. QGroundControl uses a separate MAVLink link for mode selection, arming, and manual control.
 - **Perception.** The Gazebo bridge publishes `/camera`, `/camera_info`, and `/clock` in the simulator DDS domain (61 by default). Zenoh forwards those three topics through an internal Service to the mission domain (62 by default). The [ArUco tracker](applications/aruco_tracker/) publishes the target pose for precision landing and the annotated image for the dashboard.
 - **Session state.** The [dashboard](applications/dashboard/) displays camera feeds and mission status. Its return action requests the `ReturnToStart` mode, which requires a separate arm in QGroundControl. Replacing the mission process clears the saved start and counters. Replacing the simulator pod resets the simulated world.
 
@@ -68,7 +72,7 @@ The builder needs access to GitHub, Docker Hub, and the package repositories con
 ./demo build --namespace my-mission
 ```
 
-The launcher builds the three images in your project, pushes them to the integrated registry, and writes `images.lock.json` with the resulting digests.
+The launcher builds the three images in your project, pushes them to the integrated registry, and writes `images.lock.json` with the resulting digests. The mission image includes both flight modes and the YOLO stop-sign detector.
 
 ### Build with Docker elsewhere
 
@@ -82,7 +86,7 @@ Pass the image lock from either build path to the launcher.
 ./demo deploy --namespace my-mission --images images.lock.json
 ```
 
-The launcher installs the Helm chart and waits for live camera data, vehicle telemetry, and registration of the two operator flight modes. It then prints the camera dashboard and Gazebo desktop HTTPS URLs. Anyone who can reach either Route can access its interface.
+The launcher installs the Helm chart and waits for live camera data, vehicle telemetry, and registration of the available operator flight modes. It then prints the camera dashboard and Gazebo desktop HTTPS URLs. Anyone who can reach either Route can access its interface.
 
 In a separate terminal, forward the MAVLink TCP port and leave the command running while QGroundControl is connected.
 
@@ -112,9 +116,17 @@ After the final waypoint, the dashboard shows **Demo · Precision landing**. The
 
 ![The vehicle descending above the ArUco marker in Gazebo, with the marker outline and axes in the detector feed](docs/images/landing.png)
 
+### Fly the stop-sign survey
+
+The Gazebo world starts with a face-up stop sign on the first survey lane. You can fly the scene shown below immediately after connecting.
+
+For a manual flight, select **SignSurvey** in QGroundControl and arm. The downward camera shows live YOLO detections as the drone surveys six lanes. On seeing the face-up inspection sign, the drone aligns over it at 5 m and holds for two continuous simulation seconds. The map shows planned lanes, the flown path and a single **Sign found** marker at the hold position. An empty survey completes all six lanes. Both outcomes return to the ArUco pad for landing. [Setup, fixture placement and replay](docs/stop-sign-survey.md)
+
+![Survey dashboard showing the centered stop sign, YOLO detection, and Sign found marker alongside the QGroundControl map and Gazebo view](docs/images/stop-sign-survey.png)
+
 ### Return to the saved start
 
-Click **Return to start** on the dashboard after the vehicle has landed and disarmed. Once the dashboard shows **Return selected · Arm in QGroundControl**, confirm **ReturnToStart** is active in QGroundControl and arm there. The vehicle takes off again, flies back to the saved start, lands, and disarms. When the dashboard shows **Ready for the next run**, select **DemoWaypoints** in QGroundControl to repeat the cycle.
+Click **Return to start** on the dashboard after the vehicle has landed and disarmed. Once the dashboard shows **Return selected · Arm in QGroundControl**, confirm **ReturnToStart** is active in QGroundControl and arm there. The vehicle takes off again, flies back to the saved start, lands, and disarms. When the dashboard shows **Ready for the next run**, select **DemoWaypoints** or **SignSurvey** in QGroundControl for the next flight.
 
 ## Uninstall
 
@@ -127,6 +139,8 @@ The command uninstalls the Helm release and retains the OpenShift project and bu
 ## Development
 
 Edit the ROS packages under [applications](applications) or the deployment and scenario under [deploy/chart](deploy/chart). Rebuild after changing application code or container recipes. Deploy chart and scenario changes using the existing image lock. The [build guide](docs/build.md) describes the image inputs and validation commands.
+
+Local research, model-training runs, and recorded flights can be kept in the Git-ignored `experiments/` directory. The build packages the detector from `models/`. The replay uses the same world, meshes, and textures that Helm deploys from `deploy/chart/files/`.
 
 ## References
 

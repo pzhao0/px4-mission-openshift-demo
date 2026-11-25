@@ -53,12 +53,12 @@ class ModeStub : public px4_ros2::ModeBase {
 class ExecutorProbe : public MissionExecutor {
  public:
   ExecutorProbe(ModeStub& owned, ModeStub& landing, DemoSession& session,
-                Operation operation = Operation::Demo)
+                Operation operation = Operation::Demo, uint8_t mode_id = 100, uint8_t executor_id = 1)
       : MissionExecutor(owned, landing, session, operation)
   {
     setSkipMessageCompatibilityCheck();
-    overrideRegistration(std::make_shared<RegistrationStub>(node(), operation == Operation::Demo ? 100 : 102,
-                                                          operation == Operation::Demo ? 1 : 2));
+    overrideRegistration(std::make_shared<RegistrationStub>(node(), operation == Operation::Demo ? mode_id : 102,
+                                                          operation == Operation::Demo ? executor_id : 2));
   }
   Result sendCommandSync(uint32_t command, float p1, float, float, float, float, float,
                          float p7) override
@@ -247,6 +247,38 @@ int main(int argc, char** argv)
     }
     require(f.session.statusJson().find("\"completed_runs\":2") != std::string::npos, "did not record two demo flights");
     require(f.session.statusJson().find("\"completed_returns\":2") != std::string::npos, "did not record two return flights");
+  });
+  test("both registered demos select their own route and share landing and return", [] {
+    Fixture f;
+    ModeStub survey(*f.node, "SignSurvey", 103);
+    ExecutorProbe survey_exec(survey, f.landing, f.session, MissionExecutor::Operation::Demo, 103, 3);
+    require(survey_exec.doRegister(), "survey registration failed");
+    f.session.setModeIds(100, 102, 103);
+    require(f.session.statusJson().find("\"waypoint_mode_id\":100,\"survey_mode_id\":103") != std::string::npos,
+            "missing named demo IDs");
+    f.telemetry();
+    f.status(103, false, 0);
+    f.status(103, true, 3);
+    require(!survey_exec.commands.empty() && f.executor.commands.empty(), "wrong executor took off");
+    f.complete(Status::NAVIGATION_STATE_AUTO_TAKEOFF, Result::Success, 3);
+    require(f.session.surveying() && f.session.currentPhase() == "search_searching", "wrong survey route");
+    f.complete(103, Result::Success, 3);
+    require(f.session.currentPhase() == "demo_landing", "survey did not share marker landing");
+    f.complete(101, Result::Success, 3);
+    f.telemetry(-4, 8);
+    f.status(101, false, 0);
+    require(f.returning.prepareReturn().first, "return after survey rejected");
+    f.status(102, false, 0);
+    f.status(102, true, 2);
+    f.complete(Status::NAVIGATION_STATE_AUTO_TAKEOFF, Result::Success, 2);
+    f.complete(102, Result::Success, 2);
+    f.complete(Status::NAVIGATION_STATE_AUTO_LAND, Result::Success, 2);
+    f.telemetry();
+    f.status(Status::NAVIGATION_STATE_AUTO_LAND, false, 0);
+    require(f.session.currentPhase() == "ready", "shared return failed");
+    f.reachDisarmWait();
+    require(!f.session.surveying() && f.session.statusJson().find("\"survey\":") == std::string::npos,
+            "previous survey leaked into waypoint flight");
   });
   test("cancelled return preparation is rejected when position origin changes", [] {
     Fixture f; f.reachDisarmWait(); f.telemetry(-4, 8); f.status(101, false, 0);

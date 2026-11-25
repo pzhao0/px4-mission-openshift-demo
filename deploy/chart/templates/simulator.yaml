@@ -16,6 +16,7 @@ spec:
         app.kubernetes.io/component: simulator
       annotations:
         checksum/transport: {{ tpl (.Files.Get "files/zenoh-simulator.json5") . | sha256sum }}
+        checksum/textures: {{ (.Files.Glob "files/textures/*").AsSecrets | sha256sum }}
         checksum/simulation: {{ (.Files.Glob "files/simulation/*").AsConfig | sha256sum }}
     spec:
       serviceAccountName: {{ .Release.Name }}-runtime
@@ -52,6 +53,7 @@ spec:
           securityContext: {{- include "px4.security" . | nindent 12 }}
           volumeMounts:
             - {name: desktop-tmp, mountPath: /tmp}
+            - {name: simulation, mountPath: /etc/mission-sim, readOnly: true}
           ports: [{name: desktop, containerPort: 6080}]
           readinessProbe:
             httpGet: {path: /vnc_lite.html, port: desktop}
@@ -63,7 +65,7 @@ spec:
           securityContext: {{- include "px4.security" . | nindent 12 }}
           ports: [{name: qgc, containerPort: 5760}]
         - name: camera-bridge
-          image: {{ index .Values.images "mission" | quote }}
+          image: {{ default (index .Values.images "mission") (index .Values.images "camera-bridge") | quote }}
           args: ["bridge"]
           env:
             - name: ROS_DOMAIN_ID

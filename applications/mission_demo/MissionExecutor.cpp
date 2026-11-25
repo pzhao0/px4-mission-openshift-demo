@@ -46,7 +46,7 @@ Result MissionExecutor::selectReturnMode()
 void MissionExecutor::onActivate()
 {
   std::string reason;
-  const bool allowed = _operation == Operation::Demo ? _session.beginDemo(reason) : _session.beginReturn(reason);
+  const bool allowed = _operation == Operation::Demo ? _session.beginDemo(ownedMode().id(), reason) : _session.beginReturn(reason);
   _mission_active = true;
   if (!allowed) {
     RCLCPP_WARN(node().get_logger(), "%s", reason.c_str());
@@ -75,8 +75,13 @@ void MissionExecutor::switchToState(State state, Result previous_result)
       takeoff([this](Result result) { switchToState(State::Waypoints, result); });
       break;
     case State::Waypoints:
-      _session.phase(_operation == Operation::Demo ? "demo_waypoints" : "return_transit",
-                     _operation == Operation::Demo ? "Flying the demo waypoint route." : "Flying back to the saved original start.");
+      if (_operation == Operation::Return) {
+        _session.phase("return_transit", "Flying back to the saved original start.");
+      } else if (_session.surveying()) {
+        _session.phase("search_searching", "Starting the stop-sign survey.");
+      } else {
+        _session.phase("demo_waypoints", "Flying the demo waypoint route.");
+      }
       scheduleMode(ownedMode().id(), [this](Result result) {
         switchToState(_operation == Operation::Demo ? State::PrecisionLand : State::Land, result);
       });

@@ -29,6 +29,8 @@ RUN source /opt/ros/jazzy/setup.bash \
     && cmake --build /tmp/mission-demo-tests -j${BUILD_JOBS} \
     && ctest --test-dir /tmp/mission-demo-tests --output-on-failure
 COPY runtime/ /opt/mission/
+COPY install-survey.sh /tmp/install-survey.sh
+RUN test -s /opt/mission/models/coco-yolo26n.onnx && bash /tmp/install-survey.sh
 COPY dashboard/ /opt/camera-view/
 COPY notices/ /usr/share/doc/px4-mission-demo/
 COPY build-info.json /opt/mission/build-info.json

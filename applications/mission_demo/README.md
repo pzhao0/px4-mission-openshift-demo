@@ -12,15 +12,18 @@ fly above that saved start, land and disarm. It preserves the start across rearm
 and marks the session ready for another demonstration. No controller, PX4, Gazebo,
 or pod restart is needed between complete demo/return cycles.
 
+`SignSurvey` searches up to six lanes, holds over a confirmed stop sign, and uses the same precision landing and return sequence. [Survey guide](../../docs/stop-sign-survey.md)
+
 ## Implementation
 
 | File | Responsibility |
 |---|---|
 | `DemoSession.*` | Saved start, position freshness, session progress and status |
 | `MissionModes.*` | Demo waypoints and marker landing; per-activation state reset |
+| `SurveyMode.*`, `SurveyLanes.hpp` | Stop-sign survey, alignment, hold and recovery |
 | `ReturnToStart.*` | Return transit at takeoff height and original heading; arrival/velocity tolerance |
 | `MissionExecutor.*` | Demo and return sequences, failure handling and return-mode selection |
-| `main.cpp` | Register both executors and the three modes with PX4 |
+| `main.cpp` | Register waypoint and return executors, the shared landing mode, and the survey executor |
 
 The dashboard's **Return to start** button calls `/mission/prepare_return`
 (`std_srvs/srv/Trigger`). This only selects `ReturnToStart`; the operator must arm

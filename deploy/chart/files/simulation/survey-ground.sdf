@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="survey_ground_surface">
+    <static>true</static>
+    <link name="ground">
+      <visual name="grass_and_gravel">
+        <!-- Above the collision floor and below the landing marker. -->
+        <pose>0 0 0.0005 0 0 0</pose>
+        <cast_shadows>false</cast_shadows>
+        <geometry><mesh><uri>file:///etc/mission-sim/survey-ground.obj</uri></mesh></geometry>
+        <material>
+          <ambient>1 1 1 1</ambient><diffuse>1 1 1 1</diffuse>
+          <pbr><metal>
+            <albedo_map>/etc/mission-sim/grass-gravel.jpg</albedo_map>
+            <metalness>0</metalness><roughness>1</roughness>
+          </metal></pbr>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
