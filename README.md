@@ -4,9 +4,9 @@ A software-in-the-loop (SITL) project for developing and testing ROS 2 flight mo
 
 ## Architecture
 
-For a walkthrough of the runtime connections, mission lifecycle, and repository layout, see the [architecture guide](docs/architecture.md).
+The simulator pod runs PX4 and Gazebo. Its world starts with a face-up stop sign on the first survey lane, a grass-and-gravel floor, and an ArUco landing pad. The Gazebo server and desktop mount the same world assets, so the drone camera and desktop show the same scene. [Gazebo world](deploy/chart/files/simulation/mission_landing.sdf)
 
-The [Helm chart](deploy/chart) deploys two pods. The simulator pod runs PX4 SITL with the [Gazebo world and camera configuration](deploy/chart/files/simulation) mounted from a ConfigMap. It also runs the Gazebo-to-ROS bridge, a MAVLink router for QGroundControl, and a Gazebo desktop served through noVNC. The mission pod runs the ROS 2 mission executor, YOLO stop-sign detector, and ArUco tracker alongside the Micro XRCE-DDS Agent and camera dashboard.
+The mission pod runs both flight modes and their camera processing. During the survey, OpenCV prepares the camera frames and ONNX Runtime runs YOLO26n to detect the stop sign. Both missions use OpenCV’s ArUco detector to locate the landing pad. [Architecture guide](docs/architecture.md)
 
 ```mermaid
 flowchart LR
@@ -26,17 +26,17 @@ flowchart LR
     subgraph companion["Mission pod"]
         receive["Zenoh client"]
         agent["Micro XRCE-DDS Agent"]
-        tracker["ArUco tracker"]
+        tracker["OpenCV ArUco tracker"]
         yolo["YOLO stop-sign detector"]
-        executor["Mission executor"]
+        executor["ROS 2 flight modes and executors"]
         dashboard["Camera dashboard"]
         receive --> tracker -->|Target pose| executor
         receive --> yolo -->|Sign observation| executor
-        yolo -->|Scored camera frame| dashboard
-        receive --> dashboard
+        yolo -->|Annotated survey frame| dashboard
+        receive -->|Raw camera and clock| dashboard
         agent <-->|ROS 2 topics| executor
-        agent -->|Aircraft position| dashboard
-        tracker -->|Annotated image| dashboard
+        agent -->|Position for flight path| dashboard
+        tracker -->|Annotated landing frame| dashboard
         executor <-->|Mission status and return request| dashboard
     end
 
@@ -44,12 +44,13 @@ flowchart LR
     px4 <-->|uXRCE-DDS · UDP 8888| agent
     mav <-->|TCP 5760 · port-forward| qgc["QGroundControl"]
     desktop -->|HTTPS Route| browser["Browser"]
-    dashboard -->|HTTPS Route| browser
+    dashboard <-->|HTTPS Route| browser
 ```
 
 - **Flight control.** The [mission executor](applications/mission_demo/) registers `DemoWaypoints`, `SignSurvey`, and `ReturnToStart` with PX4 through the PX4 ROS 2 Interface Library. Telemetry and flight commands travel through the uXRCE-DDS Agent Service. QGroundControl uses a separate MAVLink link for mode selection, arming, and manual control.
-- **Perception.** The Gazebo bridge publishes `/camera`, `/camera_info`, and `/clock` in the simulator DDS domain (61 by default). Zenoh forwards those three topics through an internal Service to the mission domain (62 by default). The [ArUco tracker](applications/aruco_tracker/) publishes the target pose for precision landing and the annotated image for the dashboard.
-- **Session state.** The [dashboard](applications/dashboard/) displays camera feeds and mission status. Its return action requests the `ReturnToStart` mode, which requires a separate arm in QGroundControl. Replacing the mission process clears the saved start and counters. Replacing the simulator pod resets the simulated world.
+- **Camera transport.** The bridge publishes the image, calibration, and simulation clock on `/camera`, `/camera_info`, and `/clock`. Zenoh carries these topics from the simulator DDS domain (61 by default) to the mission domain (62).
+- **Survey dashboard.** The dashboard draws the planned lanes from mission status and the flown path from PX4 position telemetry. Its single **Sign found** marker records the aircraft’s position during the hold. The detector panel shows live YOLO output during the search and switches to ArUco during landing. [Dashboard](applications/dashboard/)
+- **Session state.** Both missions share a saved start and flight counters. The dashboard can select `ReturnToStart`. The operator arms it separately in QGroundControl. Replacing the mission process clears the session. Restarting the Gazebo world restores the early sign placement.
 
 ## Prerequisites
 
